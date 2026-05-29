@@ -592,11 +592,19 @@ ${s.showAdminModal?`
 }
 
 // Boot
-window.onload=()=>{
+document.addEventListener("DOMContentLoaded",()=>{
   document.getElementById("loading").style.display="none";
   document.getElementById("app").style.display="block";
   render();
-};
+});
+// Fallback
+setTimeout(()=>{
+  if(document.getElementById("loading").style.display!=="none"){
+    document.getElementById("loading").style.display="none";
+    document.getElementById("app").style.display="block";
+    render();
+  }
+},100);
 </script>
 
 </body>
