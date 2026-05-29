@@ -175,6 +175,26 @@ button{cursor:pointer}
 <div id="app" style="display:none"></div>
 
 <script>
+// Show title immediately
+document.getElementById("loading").style.display="none";
+document.getElementById("app").style.display="block";
+document.getElementById("app").innerHTML=`
+<div style="min-height:100vh;background:linear-gradient(135deg,#1c1917,#18181b,#451a03);display:flex;align-items:center;justify-content:center;padding:24px">
+  <div style="max-width:480px;width:100%;text-align:center;display:flex;flex-direction:column;gap:24px">
+    <div style="font-size:72px">⚖️</div>
+    <div>
+      <div style="font-size:15px;font-family:monospace;letter-spacing:4px;color:#d4a853;margin-bottom:8px">互動文字冒險遊戲</div>
+      <div style="font-size:48px;font-weight:900;color:white;line-height:1.2">法官的<br>修仙退休路</div>
+      <div style="font-size:13px;color:#78716c;letter-spacing:2px;margin-top:10px">台灣雲林地方法院</div>
+    </div>
+    <div style="font-size:17px;color:#78716c;line-height:1.7">你剛通過司法特考，成為一名菜鳥法官。<br>未來二十年，能全身而退嗎？</div>
+    <div style="color:#d4a853;font-size:15px">⏳ 遊戲初始化中，請稍候...</div>
+  </div>
+</div>`;
+</script>
+
+<script defer>
+
 // ── Storage ──
 function saveRecord(r){try{let a=JSON.parse(localStorage.getItem("jp")||"[]");a.push(r);localStorage.setItem("jp",JSON.stringify(a));}catch(e){}}
 function loadRecords(){try{return JSON.parse(localStorage.getItem("jp")||"[]");}catch(e){return[];}}
@@ -605,6 +625,10 @@ setTimeout(()=>{
     render();
   }
 },100);
+
+// Override render to initialize properly  
+const _origRender = render;
+setTimeout(()=>{ render(); }, 50);
 </script>
 
 </body>
