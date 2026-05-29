@@ -4,35 +4,51 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<title>法官的修仙退休路 - 台灣雲林地方法院</title>
+<title>法官的修仙退休路</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
 <script src="https://cdn.tailwindcss.com"></script>
-<style>body{margin:0;background:#1c1917;}input{-webkit-appearance:none;}</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js" defer></script>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#1c1917;font-family:"PingFang TC","Noto Sans TC","Microsoft JhengHei",sans-serif}
+input,button{-webkit-appearance:none;font-family:inherit}
+#loading{position:fixed;inset:0;background:#1c1917;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#d4a853;font-size:22px;gap:16px;z-index:999}
+.spin{animation:spin 1s linear infinite;font-size:40px}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes bounce{0%,100%{transform:translateY(-20%)}50%{transform:translateY(0)}}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
+.animate-bounce{animation:bounce 1s ease-in-out infinite}
+.animate-pulse{animation:pulse 2s ease-in-out infinite}
+</style>
 </head>
 <body>
+<div id="loading">
+  <div class="spin">⚖️</div>
+  <div>法官的修仙退休路</div>
+  <div style="font-size:15px;color:#888">載入中，請稍候…</div>
+</div>
 <div id="root"></div>
-<script type="text/babel">
+<script>
+window.addEventListener("load", function() {
+  // Shims
+  const { useState, useRef, useCallback, useEffect } = React;
+  window.useState = useState;
+  window.useRef = useRef;
+  window.useCallback = useCallback;
+  window.useEffect = useEffect;
+});
+</script>
+<script type="text/babel" data-type="module">
 const { useState, useRef, useCallback, useEffect } = React;
 
 const INITIAL_STATS = { score: 100, hp: 100, guanxi: 50, pending: 0 };
 const ADMIN_PASSWORD = “yunlin2025”;
 
 // ─── Persistent Storage helpers ───────────────────────────────────
-function saveRecord(record) {
-try {
-let existing = JSON.parse(localStorage.getItem(“judge_players”) || “[]”);
-existing.push(record);
-localStorage.setItem(“judge_players”, JSON.stringify(existing));
-} catch(e) {}
-}
-function loadRecords() {
-try { return JSON.parse(localStorage.getItem(“judge_players”) || “[]”); } catch(e) { return []; }
-}
-function clearRecords() {
-try { localStorage.removeItem(“judge_players”); } catch(e) {}
-}
+function saveRecord(r){try{let a=JSON.parse(localStorage.getItem(“jp”)||”[]”);a.push(r);localStorage.setItem(“jp”,JSON.stringify(a));}catch(e){}}
+function loadRecords(){try{return JSON.parse(localStorage.getItem(“jp”)||”[]”);}catch(e){return[];}}
+function clearRecords(){try{localStorage.removeItem(“jp”);}catch(e){}}
 
 // ─── Audio Engine ─────────────────────────────────────────────────
 const NOTE = {
@@ -627,7 +643,9 @@ return (
 );
 }
 
-ReactDOM.createRoot(document.getElementById(“root”)).render(React.createElement(App));
+const root = ReactDOM.createRoot(document.getElementById(“root”));
+root.render(React.createElement(App));
+document.getElementById(“loading”).style.display = “none”;
 </script>
 
 </body>
