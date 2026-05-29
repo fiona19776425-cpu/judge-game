@@ -1,0 +1,634 @@
+<!DOCTYPE html>
+
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>法官的修仙退休路 - 台灣雲林地方法院</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>body{margin:0;background:#1c1917;}input{-webkit-appearance:none;}</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useRef, useCallback, useEffect } = React;
+
+const INITIAL_STATS = { score: 100, hp: 100, guanxi: 50, pending: 0 };
+const ADMIN_PASSWORD = “yunlin2025”;
+
+// ─── Persistent Storage helpers ───────────────────────────────────
+function saveRecord(record) {
+try {
+let existing = JSON.parse(localStorage.getItem(“judge_players”) || “[]”);
+existing.push(record);
+localStorage.setItem(“judge_players”, JSON.stringify(existing));
+} catch(e) {}
+}
+function loadRecords() {
+try { return JSON.parse(localStorage.getItem(“judge_players”) || “[]”); } catch(e) { return []; }
+}
+function clearRecords() {
+try { localStorage.removeItem(“judge_players”); } catch(e) {}
+}
+
+// ─── Audio Engine ─────────────────────────────────────────────────
+const NOTE = {
+A1:55,B1:61.7,
+C2:65.4,D2:73.4,E2:82.4,F2:87.3,G2:98,A2:110,B2:123.5,
+C3:130.8,D3:146.8,E3:164.8,F3:174.6,G3:196,A3:220,B3:246.9,
+C4:261.6,D4:293.7,E4:329.6,F4:349.2,G4:392,A4:440,B4:493.9,
+C5:523.3,D5:587.3,E5:659.3,G5:784,
+};
+const hz = k => NOTE[k] || 261.6;
+let _ctx=null,_master=null,_bgTimer=null,_bgStep=0,_isMuted=false,_isStarted=false;
+function getCtx(){if(!_ctx){_ctx=new(window.AudioContext||window.webkitAudioContext)();_master=_ctx.createGain();_master.gain.value=0.55;_master.connect(_ctx.destination);}return _ctx;}
+function note(freq,type,when,dur,vol,detune=0){const ctx=getCtx();const osc=ctx.createOscillator();const g=ctx.createGain();osc.type=type;osc.frequency.value=freq;if(detune)osc.detune.value=detune;g.gain.setValueAtTime(0.0001,when);g.gain.linearRampToValueAtTime(vol,when+0.04);g.gain.exponentialRampToValueAtTime(0.0001,when+dur);osc.connect(g);g.connect(_master);osc.start(when);osc.stop(when+dur+0.1);}
+function organ(freq,when,dur,vol){note(freq,“sine”,when,dur,vol);note(freq,“sine”,when,dur,vol*0.5,7);note(freq*2,“sine”,when,dur,vol*0.25);}
+function pluck(freq,when,vol){const ctx=getCtx();const osc=ctx.createOscillator();const g=ctx.createGain();osc.type=“triangle”;osc.frequency.value=freq;g.gain.setValueAtTime(vol,when);g.gain.exponentialRampToValueAtTime(0.0001,when+0.55);osc.connect(g);g.connect(_master);osc.start(when);osc.stop(when+0.6);}
+function drum(when,vol=0.5){const ctx=getCtx();const osc=ctx.createOscillator();const g=ctx.createGain();osc.type=“sine”;osc.frequency.setValueAtTime(120,when);osc.frequency.exponentialRampToValueAtTime(40,when+0.18);g.gain.setValueAtTime(vol,when);g.gain.exponentialRampToValueAtTime(0.0001,when+0.22);osc.connect(g);g.connect(_master);osc.start(when);osc.stop(when+0.25);}
+function gavel(when){const ctx=getCtx();const o1=ctx.createOscillator();const g1=ctx.createGain();o1.type=“sine”;o1.frequency.setValueAtTime(200,when);o1.frequency.exponentialRampToValueAtTime(60,when+0.08);g1.gain.setValueAtTime(0.47,when);g1.gain.exponentialRampToValueAtTime(0.0001,when+0.12);o1.connect(g1);g1.connect(_master);o1.start(when);o1.stop(when+0.15);const buf=ctx.createBuffer(1,ctx.sampleRate*0.04,ctx.sampleRate);const d=buf.getChannelData(0);for(let i=0;i<d.length;i++)d[i]=(Math.random()*2-1)*(1-i/d.length);const src=ctx.createBufferSource();const g2=ctx.createGain();src.buffer=buf;g2.gain.value=0.23;src.connect(g2);g2.connect(_master);src.start(when);}
+const BEAT=0.83,Bb2=116.5,Bb3=233.1;
+const BASS=[hz(“D2”),hz(“A2”),Bb2,hz(“F2”),hz(“C2”),hz(“G2”),hz(“A2”),hz(“A2”)];
+const PADS=[[hz(“D3”),hz(“F3”),hz(“A3”)],[hz(“A2”),hz(“E3”),hz(“A3”)],[Bb2,Bb3*0.5,hz(“F3”)],[hz(“F2”),hz(“C3”),hz(“F3”)],[hz(“C3”),hz(“E3”),hz(“G3”)],[hz(“G2”),hz(“B2”),hz(“D3”)],[hz(“A2”),hz(“C3”),hz(“E3”)],[hz(“A2”),hz(“C3”),hz(“E3”)]];
+const MELODY_NOTES=[hz(“D4”),hz(“F4”),hz(“A4”),hz(“G4”),hz(“F4”),hz(“E4”),hz(“D4”),hz(“C4”),hz(“D4”),hz(“E4”),hz(“F4”),hz(“A4”),hz(“G4”),hz(“F4”),hz(“E4”),hz(“D4”)];
+function scheduleBgStep(){if(!_isStarted)return;const step=_bgStep++;if(!_isMuted){const ctx=getCtx();const now=ctx.currentTime;const b=step%8;organ(BASS[b],now,BEAT*0.85,0.22);if(b%2===0)drum(now,0.35);if(step%8===0)gavel(now);if(b%2===0)PADS[Math.floor(b/2)%PADS.length].forEach(f=>organ(f,now,BEAT*1.8,0.09));pluck(MELODY_NOTES[step%16%MELODY_NOTES.length],now+BEAT*0.5,0.18);}_bgTimer=setTimeout(scheduleBgStep,BEAT*1000);}
+async function audioStart(){if(_isStarted)return;_isStarted=true;const ctx=getCtx();if(ctx.state===“suspended”)await ctx.resume();scheduleBgStep();}
+function audioToggleMute(){_isMuted=!_isMuted;if(_master)_master.gain.value=_isMuted?0:0.55;return _isMuted;}
+function audioClick(){if(!_isStarted||_isMuted)return;gavel(getCtx().currentTime);}
+function audioGood(){if(!_isStarted||_isMuted)return;const ctx=getCtx();const now=ctx.currentTime;[[hz(“D4”),0],[hz(“F4”),0.12],[hz(“A4”),0.24],[hz(“D5”),0.38]].forEach(([f,t])=>{note(f,“square”,now+t,0.45,0.28);note(f,“sine”,now+t,0.55,0.18);});[hz(“D4”),hz(“F4”),hz(“A4”),hz(“D5”)].forEach(f=>organ(f,now+0.65,0.9,0.20));gavel(now+0.62);}
+function audioBad(){if(!_isStarted||_isMuted)return;const ctx=getCtx();const now=ctx.currentTime;[[hz(“A3”),0],[hz(“F3”),0.18],[hz(“D3”),0.38],[hz(“A2”),0.6]].forEach(([f,t])=>{note(f,“sawtooth”,now+t,0.5,0.30);note(f*0.5,“sine”,now+t,0.5,0.20);});drum(now+0.85,0.65);drum(now+1.0,0.45);}
+function audioNext(){if(!_isStarted||_isMuted)return;const ctx=getCtx();const now=ctx.currentTime;gavel(now);[hz(“D4”),hz(“A4”),hz(“D5”)].forEach((f,i)=>note(f,“sine”,now+0.12+i*0.13,0.25,0.30));}
+function audioEnding(good){if(!_isStarted||_isMuted)return;const ctx=getCtx();const now=ctx.currentTime;if(good){gavel(now);gavel(now+0.15);[{ch:[hz(“G3”),hz(“B3”),hz(“D4”)],t:0.3},{ch:[hz(“A3”),hz(“C4”),hz(“E4”)],t:1.0},{ch:[hz(“D3”),hz(“F3”),hz(“A3”)],t:1.7},{ch:[hz(“D3”),hz(“F3”),hz(“A3”),hz(“D4”)],t:2.5}].forEach(({ch,t})=>ch.forEach(f=>organ(f,now+t,1.1,0.22)));[hz(“D5”),hz(“A4”),hz(“F4”),hz(“D4”)].forEach((f,i)=>pluck(f,now+0.4+i*0.22,0.28));}else{gavel(now);gavel(now+0.2);gavel(now+0.4);[hz(“D2”),hz(“A1”),hz(“D2”)].forEach((f,i)=>organ(f,now+0.5+i*0.6,1.0,0.28));note(hz(“D3”),“sawtooth”,now+0.5,1.8,0.22);}}
+function audioCheer(){if(!_isStarted||_isMuted)return;const ctx=getCtx();const now=ctx.currentTime;[[hz(“C4”),0],[hz(“E4”),0.12],[hz(“G4”),0.24],[hz(“C5”),0.38],[hz(“E5”),0.52],[hz(“G5”),0.66]].forEach(([f,t])=>{note(f,“triangle”,now+t,0.35,0.28);note(f,“sine”,now+t,0.45,0.14);});[hz(“C5”),hz(“E5”),hz(“G5”)].forEach(f=>organ(f,now+0.9,1.0,0.18));gavel(now+0.85);}
+function useAudio(){const[muted,setMuted]=useState(false);const start=useCallback(async()=>{await audioStart();},[]);const toggleMute=useCallback(()=>{const m=audioToggleMute();setMuted(m);},[]);return{start,toggleMute,muted,playClick:audioClick,playGood:audioGood,playBad:audioBad,playNextChapter:audioNext,playEnding:audioEnding,playCheer:audioCheer};}
+
+// ─── Game Data ────────────────────────────────────────────────────
+const CHAPTERS = [
+{ id:1, title:“第一關：禮物炸彈，恭喜入職”, bg:“from-amber-950 via-stone-900 to-zinc-900”, scene:“🎁”,
+text:`恭喜你通過司法特考！國考排名第三，媽媽在里民大會公告欄貼了你的榜單，附上手寫「吾兒為官，光宗耀祖」。\n\n第一天上班，辦公室桌上已堆了四個禮盒。\n\n📦 禮盒一：燙金名片夾紅包，「范法官惠存，小女兒案子勞煩多關照，薄禮不成敬意」——五張千元大鈔\n\n🍵 禮盒二：知名律師事務所的「頂級台灣高山茶禮盒」，市價兩萬八\n\n🥩 禮盒三：日本A5和牛一整箱，附「需冷藏請盡快享用」（物流追蹤顯示已常溫放三小時）\n\n🍷 禮盒四：法國波爾多頂級紅酒兩瓶，酒標看起來就是「很貴」\n\n書記官老王探頭壓低聲音：「法官，這是行規啦，大家都這樣…不收反而奇怪喔。」`,
+choices:[
+{ label:“A”, text:“🤔 收茶葉（感覺比較日常），和牛退回（太貴），紅包和紅酒婉拒”, tone:“bad”, emoji:“😬”, delta:{score:-20,hp:-5,guanxi:+10,pending:0}, result:`你的「有選擇性廉潔」震驚了老王，他當場嘴角抽搐。\n\n律師圈很快流傳：「新來那個范法官，只收茶不收錢，搞不懂在想什麼。」\n\n你媽媽聽說打電話來：「收別人東西要還人情，人家要你辦事你怎麼辦？我就說你讀書讀呆了…」\n\n📱 你的PTT帳號這天收到私訊：「法官大人，下次換什麼比較好收？」\n\n你：？？？`, article:“第八條白話文：跟你案子有關係的人送的東西，不管是紅包、茶葉、和牛還是「好意」，通通不能收！「部分廉潔」不算廉潔，是降低犯罪成本。”, articleNum:“第八條” },
+{ label:“B”, text:“⚖️ 全部退回，當天填單通報院長，並請老王作見證”, tone:“good”, emoji:“⚖️”, delta:{score:+5,hp:-10,guanxi:-15,pending:0}, result:`你義正言辭，全數退回，還認真填了通報表。\n\n院長拍了拍你的肩膀說「好孩子，有前途」，然後轉頭跟秘書說「幫我把這個菜鳥調到最難搞的庭。」\n\n老王欽佩又同情：「法官，我幫你簽了通報表當見證，但你知道嗎，那箱和牛已經退冰了，浪費了喔。」\n\n✅ 考績安全！人情扣了點，但你睡得著覺。`, article:“第八條正確示範！全部退回 + 通報，一氣呵成。補充：第八條第三項還要求你的家人也要遵守，回去跟媽媽說一聲吧。”, articleNum:“第八條” },
+{ label:“C”, text:“📱 偷偷叫對方來拿走，不留任何書面紀錄，假裝沒發生過”, tone:“bad”, emoji:“📱”, delta:{score:-10,hp:0,guanxi:-20,pending:+5}, result:`你覺得這樣最乾淨——沒有文件，沒有紀錄，完美消滅。\n\n但你忘了：老王已把每個細節，以Podcast訪談的口氣，講給整棟法院樓的人聽了。\n\n三樓清潔阿姨問老王：「那和牛最後怎樣了？」老王嘆氣：「退冰了，浪費啊。」\n\n📊 對造當事人聽說「有律師去看望法官」，當天下午聲請迴避。案子炸了一半。`, article:“第八條 + 第二十六條雙重提醒：私下解決不等於沒發生。正確做法是通報，讓程序說話，不要讓謠言說話。”, articleNum:“第八條、第二十六條” },
+]},
+{ id:2, title:“第二關：傳說中的「人形跳針機」”, bg:“from-slate-900 via-zinc-900 to-neutral-900”, scene:“🔁”,
+text:`開庭第三天，你人生中最難忘的當事人出現了。\n\n陳天賜先生，67歲，退休公務員，離婚訴訟原告。\n\n他這輩子只有一個使命：讓全世界知道他前妻「不是好女人」。\n\n📁 今天他帶來了一個工程用資料夾，有目錄，分頁整齊。目錄第一頁寫著：「陳天賜陳述集（民國85年至今）」，厚達四公分。\n\n他已在庭上把「她不是好女人」重複了整整 27 次。書記官在做第28個正字。對造律師白眼翻過去、盯著天花板，數著日光燈的管數。\n\n你的午餐外送三十分鐘前就到了，正在冷掉。\n\n你後面還有 8 件案子在等。`,
+choices:[
+{ label:“A”, text:“😤 「好了！陳先生，這部分已記明筆錄，我們進入下一爭點。」（直接打斷）”, tone:“bad”, emoji:“😤”, delta:{score:-15,hp:+5,guanxi:-10,pending:-5}, result:`陳天賜先生愣了三秒，然後當庭崩潰大哭。\n\n「法官你不讓我說話！這是我28年的委屈！」\n\n當天下午他在司法院臉書專頁留言：「某法院某法官不尊重當事人！！」被分享218次，留言區有人說「法院黑暗」。\n\n你的外送終於可以吃了。還是冷的。\n\n😐 後面8件案子的當事人：謝謝法官。`, article:“第十二條：法官應耐心、有禮聽審，維護當事人訴訟上權利，不得有損其尊嚴。程序上的正當性有時比效率更重要——但這個平衡真的很難。”, articleNum:“第十二條” },
+{ label:“B”, text:“🙏 深呼吸，耐心聽完，溫柔引導他說「法律上的爭點」”, tone:“neutral”, emoji:“🙏”, delta:{score:+5,hp:-20,guanxi:+20,pending:+20}, result:`你召喚了體內的聖人模式。\n\n陳先生感動熱淚盈眶：「法官，你是第一個真的在聽我說話的人！」然後又講了45分鐘，把民國85年的泛黃照片拿出來，模糊到你分不清是人還是路燈。\n\n🕕 今天排的8件案子全數延期，7位律師在外面此起彼落地嘆氣。\n\n你的便當已冷到可以結晶了。\n\n📈 未結案點數：大幅上升。`, article:“第十二條做到了，但第十一條說：妥速執行職務，不得無故延滯。這兩條永遠在打架——這就是法官的日常修羅場。”, articleNum:“第十一條、第十二條” },
+{ label:“C”, text:“☕ 宣布休庭15分鐘，請書記官老王出去「安撫一下」”, tone:“neutral”, emoji:“☕”, delta:{score:0,hp:-10,guanxi:+5,pending:+10}, result:`老王一臉「我薪水沒有這麼多」的表情走出去。\n\n15分鐘後老王回來，臉色慘白：「法官，陳先生說我們是同一掛的，還問我要不要看他87年的另一本資料夾。」\n\n⏱️ 休庭變成40分鐘。陳先生情緒稍有平復，但行李箱裡還有「資料夾B」虎視眈眈。\n\n你的外送：依然在冷。`, article:“第十三條：法官對受其監督之法院人員，應要求依法執行職務。老王是人，不是盾牌——但今天他確實擋了一發。”, articleNum:“第十三條” },
+]},
+{ id:3, title:“第三關：家族群組的午夜奇襲”, bg:“from-emerald-950 via-teal-900 to-cyan-950”, scene:“📲”,
+text:`深夜11:47，你剛用Word存好一份7,000字的判決書草稿（存檔三次，深怕斷電），準備去洗澡睡覺。\n\n📳 LINE震動。家族群組「陳家大家庭🏠一起加油💪」。\n\n🧓 舅舅：「我姪子在法院工作對不對？我朋友的女兒被告，攤販糾紛，你幫忙『關心一下』好嗎」\n\n👩 媽媽：「趕快回你舅舅！！他等你」\n\n👵 阿姨：「對啊你那麼厲害幫個小忙嘛又不是什麼大事」\n\n🧓‍♂️ 舅公：「[轉傳] [轉傳] [轉傳] [轉傳] [轉傳] [轉傳] [轉傳] [轉傳] [轉傳]」\n\n你已讀。群組立刻出現：👁️👁️👁️👁️👁️（全員已讀回執）\n\n媽媽私訊：「你怎麼看了不回！！很忙嗎你！！」`,
+choices:[
+{ label:“A”, text:“🙈 手機放下，假裝睡著了，明天再說”, tone:“neutral”, emoji:“🙈”, delta:{score:+5,hp:-25,guanxi:-15,pending:0}, result:`你關掉螢幕，蓋上棉被。\n\n手機：震動。震動。震動。震動。震動（×47）\n\n媽媽隔天清晨6:02來電，歷時52分鐘，主題是「你學法律到底是為了什麼」和「人家阿華的兒子當律師每天幫親戚」。\n\n你的血壓在7點前就已正式上線。\n\n✅ 但你沒有違規。法官帽子還在頭上。`, article:“第七條：法官對於他人承辦之案件，不得關說或請託。不回是痛苦的，但正確的。跟媽媽解釋第七條可能沒什麼用——但你可以試試看。”, articleNum:“第七條” },
+{ label:“B”, text:“📋 回覆：「舅舅，職務上不能介入個別案件，請去法律扶助基金會（412-88995）」”, tone:“good”, emoji:“📋”, delta:{score:+10,hp:-10,guanxi:-5,pending:0}, result:`你用最溫柔的語氣打出最專業的回覆，還附上服務電話。\n\n舅舅：「哦這樣哦，好啦」（沒有更多回應）\n\n媽媽：「你越來越不近人情了，你知道嗎」\n\n阿姨：「我就說讀太多書就這樣」\n\n舅公：「[轉傳一個養生影片]」\n\n你關掉群組通知，獨自凝視著天花板，思考人生的意義。\n\n✅ 考績無損。法律扶助基金會那頭，有人接起電話。`, article:“第七條精神：拒絕關說，同時指引正當途徑。你做到了「有溫度的拒絕」，雖然家族群組的溫度已降到冰點。”, articleNum:“第七條” },
+{ label:“C”, text:“📞 打電話給舅舅，「了解一下情況，看有沒有辦法幫忙」”, tone:“bad”, emoji:“⚠️”, delta:{score:-30,hp:+5,guanxi:+25,pending:+15}, result:`舅舅大喜：「哎呀我就說我姪子最靠譜！」\n\n媽媽群組發文：「我兒子幫忙了👍」配上五個讚。\n\n接下來三個月，每週至少兩件「小忙」——表妹超速罰單、王叔勞資糾紛、遠親債務案子⋯⋯\n\n你已建立了一個家族法律諮詢所，服務費：你的職業生涯。\n\n⚠️ 這條路回不了頭了。`, article:“第七條紅線！「了解情況」本質就是關說。第六條更嚴：不得利用職務為自己或他人謀取不當利益——就算對方是你舅舅。”, articleNum:“第六條、第七條” },
+]},
+{ id:4, title:“第四關：五萬塊的政治誘惑”, bg:“from-red-950 via-rose-900 to-pink-950”, scene:“🎙️”,
+text:`某黨立委辦公室今天打來電話，聲音親切到像在播廣播：\n\n「范法官您好！我們黨青年部主辦一個『司法改革論壇』，非常希望邀請您擔任與談人——純學術喔，不碰政治的！」\n\n你打開活動頁面：\n\n📋 主辦：某某黨青年部\n📍 地點：某某黨部二樓會議廳\n🎤 其他與談人：某某黨司法政策顧問（前立委）\n💰 演講費：新台幣五萬元整\n\n你的同事小林法官（同期，已有三個精品錶）：「去啊！五萬耶！而且上電視有曝光，升官有用的！」\n\n你的學長陳法官（在這棟樓生存了十五年）靠過來，只說了四個字：「你確定嗎？」`,
+choices:[
+{ label:“A”, text:“📝 接受，告知對方「我只講中立法律觀點，不涉任何黨派立場」”, tone:“bad”, emoji:“📸”, delta:{score:-25,hp:-15,guanxi:+10,pending:0}, result:`你在論壇上說了非常中立、非常學術的話。\n\n但主辦單位剪輯的宣傳影片，把你放在大型黨旗前方，搭配激昂競選音樂，字幕：「連法官都支持我們的司法政策！」\n\n影片在IG累積三萬次觀看。PTT八卦版：「法官站台爭議！」\n\n對造律師協會發聲明。院長把你叫進去談了四十分鐘，全程沒有笑聲。\n\n💸 五萬塊已存入帳戶，但代價是整個考績季的驚嚇。`, article:“第二十一條：法官於任職期間不得公開為政黨或政治組織發言演說。「我說的是中立的」不能改變場合本身的政治性。外觀跟實質一樣重要。”, articleNum:“第二十一條” },
+{ label:“B”, text:“✋ 婉拒，說明「法官身份不宜出席黨部主辦之活動」”, tone:“good”, emoji:“✋”, delta:{score:+15,hp:+5,guanxi:-10,pending:0}, result:`你說了No。\n\n立委辦公室：「啊…好，謝謝您，掰掰。」\n\n小林法官：「你傻了吧，五萬耶，你一個月加班費才多少？」\n\n陳法官走過來，對你豎起大拇指，說了一句：「你會活得比較久。」\n\n那天晚上你睡了這份工作以來最好的一覺。\n\n🌙 夢裡沒有黨旗，沒有媒體，只有一片安靜的星空。`, article:“第二十一條 + 第十八條雙達標！拒絕黨派活動是正解，參與職務外活動不得損及司法獨立中立形象。睡得著覺，是最好的報酬。”, articleNum:“第十八條、第二十一條” },
+{ label:“C”, text:“🤯 叫助理去代為出席，錢存到助理帳戶，之後再說”, tone:“bad”, emoji:“🤦”, delta:{score:-35,hp:-10,guanxi:-20,pending:0}, result:`這個神來之筆讓你同時達成：\n\n🔴 指示他人代為從事政治活動（第二十一條）\n🔴 利用職務協助他人取得不當利益（第六條）\n🔴 讓助理對你產生不可言說的人生把柄\n\n陳法官遠遠看到這一幕，搖了搖頭，低聲說：「我二十年沒見過這種神操作。」\n\n助理拿到兩萬元（她說抽成三成合理），另外三萬元是你的潛在法律責任。`, article:“第二十一條第二項鐵律：法官不得指示受其監督之人員，或利用他人代為從事政治活動。把自己的問題轉嫁他人，不是解方，是升級版的違規。”, articleNum:“第二十一條” },
+]},
+{ id:5, title:“第五關：下午三點的奇怪來訪”, bg:“from-violet-950 via-purple-900 to-indigo-950”, scene:“🚪”,
+text:`你正在審一個土地糾紛案，原告是財團，被告是一群老農民，涉及金額八億。\n\n下午三點整，書記官老王剛出去買珍珠奶茶。\n\n辦公室門口出現一個穿著筆挺的中年男性，是原告的代理律師——業界知名大型事務所合夥人。\n\n他面帶微笑，夾著一個設計感極強的提袋：\n\n「范法官，您好！我路過，想順便確認一下下次開庭時間，另外也帶了點小小心意——是我們事務所剛從日本帶回來的伴手禮，大家分著吃的那種，不是什麼貴重東西啦。」\n\n他站在門口。老王不在。只有你。`,
+choices:[
+{ label:“A”, text:“😅 「請進！開庭日期查一下，禮物先放這裡等老王回來再退。」”, tone:“bad”, emoji:“💣”, delta:{score:-30,hp:-20,guanxi:0,pending:+20}, result:`律師進來了，坐下了，喝了你桌上的礦泉水，聊了二十分鐘，話題從「開庭日期」慢慢滑向「您覺得這個案子的方向大概…」\n\n老王提著珍珠奶茶回來，看到這個場景，珍珠奶茶差點掉地上。\n\n隔天對造律師（代理農民那方）：聲請法官迴避。\n\n「律師與法官單獨會談二十分鐘」的傳言在法院大樓迴盪了整整一週，連三樓清潔阿姨都知道了。\n\n📂 案子：炸了。`, article:“第十五條核心：除法定例外，法官不得僅與一方當事人或其關係人單獨溝通、會面。「確認開庭日期」聽起來無害，但單方接觸本身就是問題所在。”, articleNum:“第十五條” },
+{ label:“B”, text:“📞 「請在走廊稍等，我打電話請書記官回來，三方一起確認。」”, tone:“good”, emoji:“📞”, delta:{score:+10,hp:0,guanxi:0,pending:0}, result:`律師微微愣了一下，然後說：「好，沒問題。」\n\n你打電話給老王，老王以百米衝刺速度跑回來，珍珠奶茶沒了（在路上喝完了，說跑步時不好帶）。\n\n三方當面確認開庭日期。伴手禮：依規定退回（裡面是麻糬，老王看起來有點難過）。\n\n✅ 全程乾淨透明，無可質疑。老王私下說：「法官，謝謝你保護我。」`, article:“第十五條精神完美體現！避免單方接觸的最好辦法，就是讓第三方在場。書記官不只是助手，也是你最好的保護盾。”, articleNum:“第十五條” },
+{ label:“C”, text:“🧊 在門口直接說：「開庭日期請查系統，禮物請帶回，這樣的拜訪我無法接受。」”, tone:“good”, emoji:“🧊”, delta:{score:+5,hp:-5,guanxi:-15,pending:0}, result:`律師愣了整整五秒。\n\n然後說「好，抱歉打擾了」，轉身離去，提袋一起帶走。\n\n你關上辦公室的門，心跳大概150下，手有點抖，但很平靜。\n\n老王回來後聽你說了這件事，沉默了三秒，說：「法官，你知道那是麻糬嗎⋯⋯」\n\n然後又說：「開玩笑的。做得好。」`, article:“第十五條 + 第八條同時合規！在門口拒絕，既斷絕了單方接觸，也謝絕了餽贈。這是最乾淨的處置，雖然代價是錯過了麻糬。”, articleNum:“第八條、第十五條” },
+]},
+{ id:6, title:“第六關：劉法官的秘密與你的良心”, bg:“from-cyan-950 via-sky-900 to-blue-950”, scene:“🔍”,
+text:`你無意間發現了一件事。\n\n你的同事劉法官（資深、和藹、每年法官節都請全辦公室吃火鍋）最近在審一個知名商人的金融詐欺案。\n\n但你同學——恰好是那個商人對造方的律師——傳來幾張照片：劉法官在那個商人的私人高爾夫俱樂部，笑容燦爛，出現了三次。\n\n「我就是讓你知道一下，你自己看著辦。」同學說完，就沒有下文了。\n\n劉法官上個月才幫你介紹了一個超好的中古車管道，省了八萬塊。他的太太最近在住院，他最近壓力很大，你看得出來。`,
+choices:[
+{ label:“A”, text:“🙈 假裝沒看到，這是照片不是鐵證，可能有誤會”, tone:“bad”, emoji:“🙅”, delta:{score:-20,hp:-10,guanxi:+5,pending:0}, result:`你把照片存進手機最深處的資料夾，然後繼續上班。\n\n三個月後，劉法官案爆發。媒體記者問到你：「您當時知道嗎？」\n\n你沉默了三秒，那三秒被鏡頭捕捉到，剪成0.75秒的動圖，在網路上傳了兩萬次。標題是：「法院黑幕？同僚隱匿疑點！」\n\n你開始需要每天看PTT確認自己有沒有上榜。`, article:“第二十六條明文：知悉其他法官確有違反倫理規範之行為，應通知職務監督權人。「可能是誤會」不是沉默的理由，是你給自己找的出口。”, articleNum:“第二十六條” },
+{ label:“B”, text:“📣 向院長室通報，提供照片及我所知的情況”, tone:“good”, emoji:“📣”, delta:{score:+15,hp:-20,guanxi:-30,pending:0}, result:`你花了三十分鐘考慮，然後去了院長室。\n\n院長謝謝你，說會啟動調查。\n\n劉法官後來知道是你。他沒有再說話。那雙幫過你的手，在走廊擦肩而過時，只是收緊了一下。\n\n你沒有再收到火鍋的邀請。\n\n但你照照鏡子，認識裡面的那個人。\n\n✅ 司法的信譽，比一頓火鍋重要。`, article:“第二十六條設立的原因就在這裡：司法公信力是集體的，不是個人的。通報不是背叛，是對這個制度最深的尊重。”, articleNum:“第二十六條” },
+{ label:“C”, text:“🤫 私下找劉法官，給他機會自首或解釋”, tone:“bad”, emoji:“😰”, delta:{score:-10,hp:-15,guanxi:-10,pending:+5}, result:`你約了劉法官喝咖啡，把照片推到他面前。\n\n劉法官看了照片，沉默了十秒，說：「謝謝你告訴我，我會處理的。」\n\n然後什麼都沒有發生。\n\n兩週後他換了個態度，暗示「你拿著這個來找我，這件事本身就很有趣」。\n\n你忽然意識到，有把柄在對方手上的，好像是你。\n\n😰 私下協商不是解方，是另一個問題的起點。`, article:“第二十六條要求通報「職務監督權人」，不是私下交涉。私下處理沒有強制力，還可能讓自己陷入共謀的嫌疑。”, articleNum:“第二十六條” },
+]},
+{ id:7, title:“第七關：熱搜第一名的審判”, bg:“from-orange-950 via-amber-900 to-red-950”, scene:“🔥”,
+text:`你接到了這輩子最高調的案子：知名男藝人性騷擾訴訟。\n\n法院外從早上七點就有人守著。三台攝影機。兩個直播主。一個大媽拿著「還我公道」的紙板。\n\n📱 你的高中同學（科技業PM，天天追Netflix）在群組發問：「欸！我看新聞了，是你在審嗎？說真的你覺得他有沒有罪？我們不說出去的啦哈哈哈」\n\n📞 下午一家媒體記者打來：「范法官，我們是做深度報導的，想跟您做個『非正式的』背景說明，不會用到您名字的…」\n\n你的法袍袖子上有一個小墨水漬，你盯著它看了五秒。`,
+choices:[
+{ label:“A”, text:“💬 在群組回：「程序都在走，相信司法就對了 😊」”, tone:“bad”, emoji:“🔥”, delta:{score:-20,hp:-15,guanxi:0,pending:+10}, result:`你以為這句話安全、中立、什麼都沒說。\n\n六分鐘後被截圖，開始流傳。\n\n解讀版本A：「法官暗示有罪（程序走完就知道）」\n解讀版本B：「法官偏袒被告（叫大家相信司法是在包庇）」\n解讀版本C：「法官太閒在聊天（不務正業）」\n\nPTT表特板出現你的大頭貼配文：「這樣的法官你放心嗎？」\n\n被告方律師：聲請迴避。你又要填一堆表了。`, article:“第十七條：對於繫屬中案件，不得公開發表可能影響裁判或程序公正之言論。就算是「相信司法」，在高敏感案件中，每個字都是地雷。”, articleNum:“第十七條” },
+{ label:“B”, text:“🤐 群組不回，電話不接，審結前保持完全沉默”, tone:“good”, emoji:“🤐”, delta:{score:+10,hp:0,guanxi:-5,pending:0}, result:`群組訊息：已讀，無回應。\n\n同學：「喂你活著嗎XDDD」\n\n媒體電話：響了七聲後轉語音信箱。\n\n你打開Word，繼續寫判決書。\n\n網路上有人說你「神秘」，有人說你「高冷」，PTT鍵盤手說「這個法官不是好惹的」。\n\n三個月後判決出爐，無論結果，你的中立性無可指摘。\n\n🌑 沉默有時候是最大聲的聲音。`, article:“第十七條正解：繫屬中案件，沉默是保護自己也是保護程序正義的方式。不說不是冷漠，是職業倫理的最高體現。”, articleNum:“第十七條” },
+{ label:“C”, text:“🎤 接受記者「非正式說明」，強調自己絕對公正中立”, tone:“bad”, emoji:“📺”, delta:{score:-35,hp:-20,guanxi:+5,pending:+15}, result:`你說了整整二十分鐘「中立、公正、依法」之類的話，感覺說得相當好。\n\n隔天早上新聞標題：\n\n🗞️「法官疑透露案情傾向！」\n🗞️「獨家：審判前法官私下表態？」\n🗞️「這個案子要完了嗎？（法官訪談全文）」\n\n你的訪談只佔原本報導的六分之一，但剪輯後看起來你好像說了整件案子。\n\n📺 你上了三個政論節目——當作被討論的對象，不是與談人。`, article:“第十七條嚴格禁止！「非正式」不代表不算數，媒體的剪刀永遠比你說的話更有力量。開口，就是把主控權拱手讓人。”, articleNum:“第十七條” },
+]},
+{ id:8, title:“最終關：退休前夕，最後一個誘惑”, bg:“from-indigo-950 via-slate-900 to-zinc-950”, scene:“🌅”,
+text:`二十年了。\n\n你撐過了禮物炸彈、跳針當事人、家族群組奇襲、黨部論壇誘惑、律師單方拜訪、同僚的秘密、媒體的炎上，和大概一萬四千個冷掉的便當。\n\n明天是你的退休典禮，司法院要頒給你「資深優良法官」獎狀，上面有院長的親筆簽名。\n\n書記官老王（頭髮已半白）今天下班前在你辦公室門口站了很久，最後說：「法官，謝謝你這二十年。你讓我相信這份工作是值得的。」說完就跑走了，你看到他用袖子擦了一下眼角。\n\n你的同期小林法官三個月前被送懲戒法院，上了新聞。你的同期陳法官兩年前因過勞住院，現在在復健。\n\n現在是退休前最後一個下午，辦公室靜悄悄的，夕陽從百葉窗的縫隙射進來。\n\n你舅舅突然來了一則訊息：「你不是明天退休嗎？之前那個朋友的案子，趁著最後一天幫我查一下唄，反正你也不在了，沒差吧？」`,
+choices:[
+{ label:“A”, text:“🏔️ 把手機放下，把辦公室鑰匙交給老王，明天帶著清白名聲走出法院”, tone:“good”, emoji:“🏔️”, delta:{score:+10,hp:+10,guanxi:+10,pending:-10}, result:`你沒有回舅舅的訊息。\n\n你把辦公室收拾乾淨，桌上只留下一盆還活著的多肉植物（準備帶走），和你第一份判決書的草稿（留下紀念）。\n\n老王在走廊等著你，拿著辦公室的集體送別卡，上面有每個人的簽名。清潔阿姨也簽了。\n\n你走出法院大門的那一刻，回頭看了一眼灰色的建築。\n\n二十年。你認識每一道縫隙，每一個角落，每一個跳針的當事人，每一個深夜的Word存檔聲。\n\n🏆 你帶走了只有時間才能給予的東西：一個清白的名字。`, article:“第二條精神：法官應本於良心，超然、獨立，不受任何利害關係影響。二十年如一日，不忘初心——這才是真正的修仙。”, articleNum:“第二條”, isEnding:true, endingType:“good” },
+{ label:“B”, text:“🎙️ 接受各媒體退休訪問，大聲疾呼「司法改革刻不容緩！」”, tone:“neutral”, emoji:“🎙️”, delta:{score:-5,hp:-20,guanxi:+15,pending:0}, result:`你的退休感言在網路上掀起一番波瀾。\n\n有些話被斷章取義；有些話得罪了前同事；有些話讓幾件還在審的案子的當事人打了陳情電話到院長室。\n\n你退休後的第一週，上了四個政論節目，血壓收縮壓衝到158，太太開始管你的鹽分攝取。\n\n老王傳了一則訊息：「法官，您明明可以安靜退休的……」\n\n😌 修仙之路，走到最後一步還是踩了一個坑。`, article:“第十七條的精神不因退休而結束：即便是退休前夕，涉及現行案件的言論仍可能影響司法形象。安靜退場，是最後一課。”, articleNum:“第十七條”, isEnding:true, endingType:“neutral” },
+{ label:“C”, text:“📂 「舅舅等我，我最後查一次，反正明天就退了」”, tone:“bad”, emoji:“💀”, delta:{score:-50,hp:-30,guanxi:+5,pending:+20}, result:`你打開了系統。\n\n你告訴自己：「最後一次，沒有人會知道的。」\n\n但老王回來拿忘記的雨傘，看到了螢幕。\n\n院長得知後取消了頒獎典禮。獎狀沒了。典禮變成「職務調查說明會」。\n\n舅舅在群組說：「沒有啦，我就問一下而已，搞這麼大！」然後傳了一個大笑表情貼圖。\n\n你看著那個表情貼圖很久很久。\n\n二十年的清白，最後一天，輸給了一則LINE訊息。`, article:“第六條、第七條：職務便利不因即將離職而消失。廉潔不是「任期內的承諾」，是一輩子的修行。最後一天，才是真正的考驗。”, articleNum:“第六條、第七條”, isEnding:true, endingType:“bad” },
+]},
+];
+
+const ENDINGS = {
+scoreZero:{ title:“⚖️ 懲戒法院，報到！”, color:“from-red-900 to-red-950”, emoji:“⚖️”, text:`你的考績歸零，被移送懲戒法院。\n\n審判庭上，你坐在被告席。\n\n書記官（不是老王）唸著起訴書，你聽著那些指控，一字一字地，感受到一種奇特的熟悉感——\n\n這就是你讓無數當事人感受過的：等待。不確定。人生被別人的一紙文書決定。\n\n懲戒法院的法官低頭翻著你的卷宗，嘆了一口氣，說：\n\n「法官同仁，你比這個法庭裡任何一個人都更清楚，接下來意味著什麼。」\n\n庭外，老王站在走廊上，盯著牆壁，一言不發。` },
+hpZero:{ title:“🏥 急診室，床號17”, color:“from-slate-900 to-slate-950”, emoji:“💉”, text:`你在第六件判決書寫到第4,200字的時候，整個人趴在鍵盤上。\n\n鍵盤：KKKKKKKKKKKKKKKKK\n\n急救人員說：「還好叫得早。」\n\nICU病床上，你盯著天花板上的螢光燈，腦子裡自動跑著那些還沒結的案子。\n\n「那個陳天賜先生的民國85年照片，到底是人還是路燈……」\n\n你的太太坐在床邊，說：「你醒來的第一句話，是問判決書存檔了沒。」\n\n護理師輕輕說：「法官先生，您需要休息，不是更多案子。」\n\n窗外，法院的燈還亮著。` },
+guanxiZero:{ title:“👻 孤魂野鬼・法官版”, color:“from-teal-900 to-teal-950”, emoji:“👻”, text:`你拒絕了所有禮物，拒絕了所有關說，拒絕了黨派論壇，拒絕了媒體訪問，拒絕了舅舅，拒絕了所有人。\n\n你也失去了所有人。\n\n今天是你的生日。\n\n法院大廳裡，同事們在幫別人慶生，蛋糕是草莓口味的。\n\n沒有人記得是你的生日。\n\n老王傳了一則訊息：「法官，今天有三件新案子分配到你這。生日快樂。」\n\n你看著窗外，唸出了《法官倫理規範》第二條：「超然、獨立…」\n\n超然，有時候跟孤獨，長得一模一樣。` },
+pendingMax:{ title:“📚 卷宗山崩塌事件”, color:“from-amber-900 to-amber-950”, emoji:“📚”, text:`你辦公室的卷宗，從桌子上堆到椅子上，從椅子上堆到地上，從地上蔓延到走廊，老王每天上班都要側著身子才能進來。\n\n最高法院發了一封公文：「請說明案件積壓原因及改善計畫，限七日內回覆。」\n\n你看著那封公文，再看看卷宗山，算了一下，你需要的不是七天，是七十年。\n\n走廊盡頭，一位等待判決已滿四年的當事人，今天又來了一趟。\n\n他站在走廊上，問老王：「我的案子……今天有進展嗎？」\n\n老王沉默了三秒。\n\n你沒有看見，但你聽到了那個沉默的聲音。` },
+neutral:{ title:“🎙️ 退休風波・番外篇”, color:“from-slate-800 to-indigo-950”, emoji:“📺”, text:`你的退休感言在網路上掀起一番波瀾。\n\n有些話被斷章取義；有些話得罪了前同事；有些話讓幾件還在審的案子的當事人打了陳情電話到院長室。\n\n你退休後的第一週，上了四個政論節目，血壓收縮壓衝到158，太太開始管你的鹽分攝取。\n\n老王傳了一則訊息：「法官，您明明可以安靜退休的……」\n\n二十年廉潔的修行沒有白費——只是最後一步，走得不夠優雅。\n\n😌 修仙九成九，差那一點點。` },
+};
+
+const ENDING_LABELS = {
+scoreZero:“懲戒法院”, hpZero:“過勞送醫”, guanxiZero:“孤魂野鬼”,
+pendingMax:“案山崩塌”, good:“修仙成功”, neutral:“退休風波”, bad:“最後失足”,
+};
+
+// ─── Admin Panel ──────────────────────────────────────────────────
+function AdminPanel({ onClose }) {
+const [records, setRecords] = useState(null);
+const [confirmClear, setConfirmClear] = useState(false);
+
+useEffect(() => {
+loadRecords().then(setRecords);
+}, []);
+
+async function handleClear() {
+await clearRecords();
+setRecords([]);
+setConfirmClear(false);
+}
+
+if (records === null) return (
+<div className="min-h-screen bg-stone-950 flex items-center justify-center text-white text-xl">載入名單中…</div>
+);
+
+return (
+<div className=“min-h-screen bg-stone-950 text-stone-100 p-6” style={{ fontFamily: “‘Noto Sans TC’, sans-serif” }}>
+<div className="max-w-2xl mx-auto space-y-6">
+{/* Header */}
+<div className="flex items-center justify-between">
+<div>
+<div className="text-amber-400 text-sm font-mono mb-1">台灣雲林地方法院・政風室</div>
+<h1 className=“text-3xl font-black” style={{ fontFamily: “‘Noto Serif TC’, serif” }}>🎁 領獎名單</h1>
+</div>
+<button onClick={onClose} className="px-4 py-2 bg-stone-800 hover:bg-stone-700 rounded-xl text-sm font-semibold transition-colors">
+✕ 關閉
+</button>
+</div>
+
+```
+    {/* Stats summary */}
+    <div className="grid grid-cols-3 gap-3">
+      <div className="bg-stone-800 rounded-xl p-4 text-center">
+        <div className="text-3xl font-black text-amber-300">{records.length}</div>
+        <div className="text-sm text-stone-400 mt-1">總完成人數</div>
+      </div>
+      <div className="bg-stone-800 rounded-xl p-4 text-center">
+        <div className="text-3xl font-black text-green-400">{records.filter(r=>r.ending==="good").length}</div>
+        <div className="text-sm text-stone-400 mt-1">修仙成功</div>
+      </div>
+      <div className="bg-stone-800 rounded-xl p-4 text-center">
+        <div className="text-3xl font-black text-red-400">{records.filter(r=>r.ending!=="good").length}</div>
+        <div className="text-sm text-stone-400 mt-1">各式結局</div>
+      </div>
+    </div>
+
+    {/* Records list */}
+    {records.length === 0 ? (
+      <div className="bg-stone-800 rounded-2xl p-10 text-center text-stone-500 text-lg">
+        還沒有人完成遊戲
+      </div>
+    ) : (
+      <div className="space-y-2">
+        <div className="grid grid-cols-12 text-xs text-stone-500 font-mono px-4 pb-1">
+          <span className="col-span-1">#</span>
+          <span className="col-span-4">姓名</span>
+          <span className="col-span-4">結局</span>
+          <span className="col-span-3">完成時間</span>
+        </div>
+        {records.map((r, i) => (
+          <div key={i} className={`grid grid-cols-12 items-center px-4 py-3 rounded-xl border text-base
+            ${r.ending === "good"
+              ? "bg-green-900/20 border-green-700/40"
+              : r.ending === "neutral"
+              ? "bg-amber-900/20 border-amber-700/40"
+              : "bg-red-900/20 border-red-700/30"}`}>
+            <span className="col-span-1 text-stone-500 font-mono text-sm">{i + 1}</span>
+            <span className="col-span-4 font-bold text-white">{r.name}</span>
+            <span className={`col-span-4 text-sm font-semibold
+              ${r.ending === "good" ? "text-green-400" : r.ending === "neutral" ? "text-amber-400" : "text-red-400"}`}>
+              {ENDING_LABELS[r.ending] || r.ending}
+            </span>
+            <span className="col-span-3 text-stone-400 text-xs font-mono">{r.time}</span>
+          </div>
+        ))}
+      </div>
+    )}
+
+    {/* Clear button */}
+    <div className="border-t border-stone-800 pt-4">
+      {confirmClear ? (
+        <div className="flex gap-3 items-center">
+          <span className="text-stone-400 text-sm">確定要清除所有紀錄？</span>
+          <button onClick={handleClear} className="px-4 py-2 bg-red-700 hover:bg-red-600 text-white rounded-lg text-sm font-bold">確定清除</button>
+          <button onClick={() => setConfirmClear(false)} className="px-4 py-2 bg-stone-700 hover:bg-stone-600 text-white rounded-lg text-sm">取消</button>
+        </div>
+      ) : (
+        <button onClick={() => setConfirmClear(true)} className="px-4 py-2 bg-stone-800 hover:bg-stone-700 border border-stone-700 text-stone-400 rounded-lg text-sm transition-colors">
+          🗑️ 清除所有紀錄
+        </button>
+      )}
+    </div>
+  </div>
+</div>
+```
+
+);
+}
+
+// ─── Shared UI ────────────────────────────────────────────────────
+function StatBar({ label, value, max, color, icon }) {
+const pct = Math.min(100, Math.max(0, (value / max) * 100));
+const isLow = pct < 25;
+return (
+<div className="flex flex-col gap-1.5">
+<div className="flex justify-between items-center">
+<span className="text-base font-semibold text-stone-300">{icon} {label}</span>
+<span className={`text-base font-bold font-mono ${isLow ? "text-red-400 animate-pulse" : "text-stone-200"}`}>{value}</span>
+</div>
+<div className="h-3.5 bg-stone-800 rounded-full overflow-hidden border border-stone-700">
+<div className={`h-full rounded-full transition-all duration-700 ease-out ${color} ${isLow ? "animate-pulse" : ""}`}
+style={{ width: `${pct}%` }} />
+</div>
+</div>
+);
+}
+
+function GiftBox({ name, onCheer }) {
+return (
+<div
+className="bg-amber-400/15 border-2 border-amber-400/50 rounded-2xl px-6 py-5 cursor-pointer hover:bg-amber-400/25 transition-all active:scale-95"
+onClick={onCheer}
+>
+<div className="text-4xl mb-2">🎁</div>
+<div className="text-xl font-black text-amber-300 mb-1">溫馨提醒</div>
+{name && (
+<div className="text-base text-amber-200/70 mb-2 font-mono">✦ {name} ✦</div>
+)}
+<div className="text-lg font-semibold text-stone-200 leading-relaxed">
+完成遊戲後，歡迎前往 <span className="text-white font-black underline decoration-amber-400">政風室</span> 領取精美小禮物！
+</div>
+</div>
+);
+}
+
+function EndingScreen({ type, name, onRestart, onCheer }) {
+const e = ENDINGS[type];
+return (
+<div className={`min-h-screen bg-gradient-to-br ${e.color} flex items-center justify-center p-6`}>
+<div className="max-w-xl w-full text-center space-y-6">
+<div className="text-9xl animate-bounce">{e.emoji}</div>
+<h1 className=“text-4xl font-black text-white” style={{ fontFamily: “‘Noto Serif TC’, serif” }}>{e.title}</h1>
+{name && <div className="text-amber-300 text-lg font-bold">👤 {name}</div>}
+<p className=“text-stone-300 whitespace-pre-line text-lg leading-relaxed” style={{ fontFamily: “‘Noto Sans TC’, sans-serif” }}>{e.text}</p>
+<div className="border-t border-white/20 pt-4 text-base text-stone-500 italic">——《法官倫理規範》，中華民國101年1月6日施行——</div>
+<GiftBox name={name} onCheer={onCheer} />
+<button onClick={onRestart} className="px-10 py-4 bg-white/10 hover:bg-white/20 border border-white/30 text-white rounded-xl transition-all hover:scale-105 text-lg font-semibold">
+🔄 重新挑戰修仙之路
+</button>
+</div>
+</div>
+);
+}
+
+function GoodEnding({ name, onRestart, onCheer }) {
+return (
+<div className="min-h-screen bg-gradient-to-br from-amber-900 via-stone-900 to-zinc-900 flex items-center justify-center p-6">
+<div className="max-w-xl w-full text-center space-y-6">
+<div className="text-9xl">🏔️</div>
+<div className="text-yellow-300 text-base font-bold font-mono tracking-widest">✦ TRUE ENDING ✦</div>
+<h1 className=“text-4xl font-black text-amber-100” style={{ fontFamily: “‘Noto Serif TC’, serif” }}>修仙成功，功德圓滿</h1>
+{name && <div className="text-amber-300 text-lg font-bold">👤 {name}</div>}
+<p className=“text-stone-300 text-lg leading-relaxed” style={{ fontFamily: “‘Noto Sans TC’, sans-serif” }}>
+你帶著獎狀、老王的眼淚、和一個清白的名聲，走出了法院大門。<br /><br />
+山路上，你回頭看了一眼那棟灰色建築。<br /><br />
+二十年。無數個深夜。無數個跳針當事人。無數個禮盒、關說、媒體電話、冷掉的便當。<br /><br />
+你都挺過來了。<br /><br />
+《法官倫理規範》第二條說：「法官應本於良心，依據憲法及法律，超然、獨立從事審判。」<br /><br />
+<span className="text-amber-300 font-bold text-xl">你做到了。</span><br /><br />
+<span className="text-stone-500 text-base">（老王說，辦公室那盆多肉植物你帶走了，他有點捨不得。）</span>
+</p>
+<GiftBox name={name} onCheer={onCheer} />
+<button onClick={onRestart} className="px-10 py-4 bg-amber-700/50 hover:bg-amber-600/50 border border-amber-500/50 text-amber-100 rounded-xl transition-all hover:scale-105 text-lg font-semibold">
+🔄 再玩一次
+</button>
+</div>
+</div>
+);
+}
+
+// ─── Main Game ────────────────────────────────────────────────────
+function App() {
+const [stats, setStats] = useState(INITIAL_STATS);
+const [chapter, setChapter] = useState(0);
+const [phase, setPhase] = useState(“title”);
+const [lastChoice, setLastChoice] = useState(null);
+const [endingType, setEndingType] = useState(null);
+const [goodEnding, setGoodEnding] = useState(false);
+const [playerName, setPlayerName] = useState(””);
+const [nameInput, setNameInput] = useState(””);
+const [nameError, setNameError] = useState(false);
+const [showAdmin, setShowAdmin] = useState(false);
+const [adminInput, setAdminInput] = useState(””);
+const [adminError, setAdminError] = useState(false);
+const [adminPrompt, setAdminPrompt] = useState(false);
+const [titleTapCount, setTitleTapCount] = useState(0);
+const topRef = useRef(null);
+const audio = useAudio();
+const cur = CHAPTERS[chapter];
+
+function checkEndings(s) {
+if (s.score <= 0) return “scoreZero”;
+if (s.hp <= 0) return “hpZero”;
+if (s.guanxi <= 0) return “guanxiZero”;
+if (s.pending >= 100) return “pendingMax”;
+return null;
+}
+
+function formatTime() {
+const now = new Date();
+return `${now.getMonth()+1}/${now.getDate()} ${String(now.getHours()).padStart(2,"0")}:${String(now.getMinutes()).padStart(2,"0")}`;
+}
+
+async function handleStart() {
+if (!nameInput.trim()) { setNameError(true); return; }
+setPlayerName(nameInput.trim());
+setNameError(false);
+await audio.start();
+audio.playNextChapter();
+setPhase(“story”);
+}
+
+function handleChoice(choice) {
+audio.playClick();
+const ns = {
+score: Math.min(120, Math.max(0, stats.score + (choice.delta.score || 0))),
+hp: Math.min(120, Math.max(0, stats.hp + (choice.delta.hp || 0))),
+guanxi: Math.min(100, Math.max(0, stats.guanxi + (choice.delta.guanxi || 0))),
+pending: Math.min(100, Math.max(0, stats.pending + (choice.delta.pending || 0))),
+};
+setStats(ns);
+setLastChoice(choice);
+setPhase(“result”);
+if (topRef.current) topRef.current.scrollIntoView({ behavior: “smooth” });
+setTimeout(() => {
+if (choice.tone === “good”) audio.playGood();
+else if (choice.tone === “bad”) audio.playBad();
+}, 200);
+const ending = checkEndings(ns);
+if (ending) {
+setTimeout(async () => {
+audio.playEnding(false);
+await saveRecord({ name: playerName, ending, time: formatTime() });
+setEndingType(ending); setPhase(“ending”);
+}, 2800);
+} else if (choice.isEnding) {
+if (choice.endingType === “good”) {
+setTimeout(async () => {
+audio.playEnding(true);
+await saveRecord({ name: playerName, ending: “good”, time: formatTime() });
+setGoodEnding(true);
+}, 2800);
+} else if (choice.endingType === “bad”) {
+setTimeout(async () => {
+audio.playEnding(false);
+await saveRecord({ name: playerName, ending: “bad”, time: formatTime() });
+setEndingType(“scoreZero”); setPhase(“ending”);
+}, 2800);
+} else if (choice.endingType === “neutral”) {
+setTimeout(async () => {
+audio.playEnding(false);
+await saveRecord({ name: playerName, ending: “neutral”, time: formatTime() });
+setEndingType(“neutral”); setPhase(“ending”);
+}, 2800);
+}
+}
+}
+
+function handleNext() {
+if (chapter < CHAPTERS.length - 1) {
+audio.playNextChapter();
+setChapter(c => c + 1);
+setPhase(“story”);
+setLastChoice(null);
+if (topRef.current) topRef.current.scrollIntoView({ behavior: “smooth” });
+} else if (lastChoice && lastChoice.isEnding) {
+// Last chapter — trigger ending immediately if not already triggered
+const et = lastChoice.endingType;
+if (et === “good”) { audio.playEnding(true); saveRecord({ name: playerName, ending: “good”, time: formatTime() }); setGoodEnding(true); }
+else if (et === “neutral”) { audio.playEnding(false); saveRecord({ name: playerName, ending: “neutral”, time: formatTime() }); setEndingType(“neutral”); setPhase(“ending”); }
+else { audio.playEnding(false); saveRecord({ name: playerName, ending: “bad”, time: formatTime() }); setEndingType(“scoreZero”); setPhase(“ending”); }
+}
+}
+
+function restart() {
+setStats(INITIAL_STATS); setChapter(0); setPhase(“title”);
+setLastChoice(null); setEndingType(null); setGoodEnding(false);
+setPlayerName(””); setNameInput(””); setNameError(false);
+}
+
+// Secret admin tap (tap title 5 times)
+function handleTitleTap() {
+const next = titleTapCount + 1;
+setTitleTapCount(next);
+if (next >= 5) { setAdminPrompt(true); setTitleTapCount(0); }
+}
+
+function handleAdminLogin() {
+if (adminInput === ADMIN_PASSWORD) {
+setShowAdmin(true); setAdminPrompt(false); setAdminInput(””); setAdminError(false);
+} else {
+setAdminError(true);
+}
+}
+
+if (showAdmin) return <AdminPanel onClose={() => setShowAdmin(false)} />;
+if (goodEnding) return <GoodEnding name={playerName} onRestart={restart} onCheer={audio.playCheer} />;
+if (phase === “ending” && endingType) return <EndingScreen type={endingType} name={playerName} onRestart={restart} onCheer={audio.playCheer} />;
+
+// ── Title screen ──
+if (phase === “title”) {
+return (
+<div className="min-h-screen bg-gradient-to-br from-stone-950 via-zinc-900 to-amber-950 flex items-center justify-center p-6">
+<div className="max-w-lg w-full text-center space-y-7">
+<div className="text-8xl">⚖️</div>
+<div onClick={handleTitleTap} className="cursor-default select-none">
+<div className="text-amber-400 text-base font-mono tracking-widest mb-2">互動文字冒險遊戲</div>
+<h1 className=“text-5xl font-black text-white leading-tight” style={{ fontFamily: “‘Noto Serif TC’, serif” }}>
+法官的<br />修仙退休路
+</h1>
+<div className="mt-3 text-stone-400 text-sm tracking-wide">台灣雲林地方法院</div>
+</div>
+
+```
+      <p className="text-stone-400 text-lg leading-relaxed">
+        你剛通過司法特考，成為一名菜鳥法官。<br />未來二十年，能全身而退嗎？
+      </p>
+
+      {/* Name input */}
+      <div className="bg-white/5 border border-white/15 rounded-2xl px-5 py-5 space-y-3 text-left">
+        <label className="text-base font-bold text-amber-300 block">📝 請輸入您的姓名</label>
+        <input
+          type="text"
+          value={nameInput}
+          onChange={e => { setNameInput(e.target.value); setNameError(false); }}
+          onKeyDown={e => e.key === "Enter" && handleStart()}
+          placeholder="例：王大明"
+          maxLength={20}
+          className={`w-full bg-black/30 border rounded-xl px-4 py-3 text-white text-lg placeholder-stone-600 outline-none transition-colors
+            ${nameError ? "border-red-500 focus:border-red-400" : "border-white/20 focus:border-amber-400"}`}
+        />
+        {nameError && <p className="text-red-400 text-sm">請輸入姓名才能開始遊戲！</p>}
+      </div>
+
+      <div className="grid grid-cols-2 gap-3 text-sm text-stone-500 border border-stone-700 rounded-xl p-4">
+        <div>⚖️ 考績值：歸零送懲戒</div>
+        <div>❤️ 血量：歸零過勞送醫</div>
+        <div>🍗 人情：歸零孤魂野鬼</div>
+        <div>⏰ 未結案：滿了案山崩塌</div>
+      </div>
+
+      <button
+        onClick={handleStart}
+        className="w-full py-5 bg-amber-700 hover:bg-amber-600 text-white rounded-2xl text-xl font-black transition-all hover:scale-105 active:scale-95 shadow-lg shadow-amber-900/50"
+      >
+        🚀 開始修仙之路
+      </button>
+      <p className="text-stone-600 text-sm">based on 《法官倫理規範》中華民國101年1月6日施行</p>
+    </div>
+
+    {/* Admin password modal */}
+    {adminPrompt && (
+      <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-6">
+        <div className="bg-stone-900 border border-stone-700 rounded-2xl p-8 w-full max-w-sm space-y-4">
+          <h2 className="text-xl font-black text-white">🔐 管理員登入</h2>
+          <input
+            type="password"
+            value={adminInput}
+            onChange={e => { setAdminInput(e.target.value); setAdminError(false); }}
+            onKeyDown={e => e.key === "Enter" && handleAdminLogin()}
+            placeholder="輸入密碼"
+            className={`w-full bg-black/40 border rounded-xl px-4 py-3 text-white text-base outline-none
+              ${adminError ? "border-red-500" : "border-stone-600 focus:border-amber-400"}`}
+          />
+          {adminError && <p className="text-red-400 text-sm">密碼錯誤</p>}
+          <div className="flex gap-3">
+            <button onClick={handleAdminLogin} className="flex-1 py-3 bg-amber-700 hover:bg-amber-600 text-white rounded-xl font-bold transition-colors">確認</button>
+            <button onClick={() => { setAdminPrompt(false); setAdminInput(""); setAdminError(false); }} className="flex-1 py-3 bg-stone-700 hover:bg-stone-600 text-white rounded-xl font-bold transition-colors">取消</button>
+          </div>
+        </div>
+      </div>
+    )}
+  </div>
+);
+```
+
+}
+
+// ── Main game screen ──
+return (
+<div ref={topRef} className={`min-h-screen bg-gradient-to-br ${cur.bg} text-stone-100 flex flex-col`} style={{ fontFamily: “‘Noto Sans TC’, sans-serif” }}>
+<div className="sticky top-0 z-20 backdrop-blur-md bg-black/55 border-b border-white/10 px-4 py-3">
+<div className="max-w-2xl mx-auto">
+<div className="flex items-center justify-between mb-2">
+<div className="flex items-center gap-2">
+<span className="text-base font-bold text-stone-300 font-mono">⚖ 修仙退休路</span>
+{playerName && (
+<span className="text-sm bg-amber-700/40 border border-amber-600/40 text-amber-200 px-2.5 py-0.5 rounded-full font-semibold">
+👤 {playerName}
+</span>
+)}
+</div>
+<button onClick={audio.toggleMute} className="text-xl px-2 py-1 rounded-lg bg-white/10 hover:bg-white/20 transition-colors">
+{audio.muted ? “🔇” : “🔊”}
+</button>
+</div>
+<div className="grid grid-cols-2 gap-x-5 gap-y-3">
+<StatBar label="考績值" value={stats.score} max={100} color="bg-gradient-to-r from-yellow-500 to-amber-400" icon="⚖️" />
+<StatBar label="血量" value={stats.hp} max={100} color="bg-gradient-to-r from-rose-500 to-red-400" icon="❤️" />
+<StatBar label="人情羈絆" value={stats.guanxi} max={100} color="bg-gradient-to-r from-emerald-500 to-teal-400" icon="🍗" />
+<StatBar label="未結案點數" value={stats.pending} max={100} color="bg-gradient-to-r from-orange-600 to-red-500" icon="⏰" />
+</div>
+</div>
+</div>
+
+```
+  <div className="flex-1 flex flex-col max-w-2xl mx-auto w-full px-4 py-6 gap-5">
+    <div className="flex items-center gap-4">
+      <div className="text-5xl">{cur.scene}</div>
+      <div>
+        <div className="text-sm text-stone-400 font-mono mb-1">第 {chapter + 1} / {CHAPTERS.length} 關</div>
+        <h2 className="text-2xl font-black text-stone-100 leading-snug" style={{ fontFamily: "'Noto Serif TC', serif" }}>{cur.title}</h2>
+      </div>
+    </div>
+
+    <div className="bg-black/35 backdrop-blur-sm border border-white/10 rounded-2xl p-6">
+      {phase === "story" && (
+        <p className="text-stone-200 whitespace-pre-line text-lg leading-relaxed">{cur.text}</p>
+      )}
+      {phase === "result" && lastChoice && (
+        <div className="space-y-5">
+          <div className="flex items-start gap-3">
+            <span className="text-4xl shrink-0">{lastChoice.emoji}</span>
+            <p className="text-stone-200 whitespace-pre-line text-lg leading-relaxed">{lastChoice.result}</p>
+          </div>
+          <div className="flex flex-wrap gap-2 py-3 border-y border-white/10">
+            {Object.entries(lastChoice.delta).map(([key, val]) => {
+              if (!val) return null;
+              const labels = { score:"⚖️考績", hp:"❤️血量", guanxi:"🍗人情", pending:"⏰未結案" };
+              return (
+                <span key={key} className={`text-base font-bold px-3 py-1.5 rounded-full border ${val > 0 ? "border-green-500/50 bg-green-900/30 text-green-300" : "border-red-500/50 bg-red-900/30 text-red-300"}`}>
+                  {labels[key]} {val > 0 ? "+" : ""}{val}
+                </span>
+              );
+            })}
+          </div>
+          <div className="bg-amber-900/30 border border-amber-500/30 rounded-xl p-4 space-y-2">
+            <div className="text-amber-400 text-base font-black font-mono">📜 《法官倫理規範》{lastChoice.articleNum}</div>
+            <p className="text-amber-200/80 text-base leading-relaxed">{lastChoice.article}</p>
+          </div>
+        </div>
+      )}
+    </div>
+
+    {phase === "story" && (
+      <div className="grid gap-3">
+        {cur.choices.map((choice) => (
+          <button key={choice.label} onClick={() => handleChoice(choice)}
+            className="w-full text-left bg-white/5 hover:bg-white/12 border border-white/15 hover:border-white/35 rounded-2xl px-5 py-4 transition-all hover:scale-[1.01] active:scale-[0.98] group">
+            <div className="flex items-start gap-4">
+              <span className="text-lg font-black font-mono text-stone-400 group-hover:text-amber-300 transition-colors shrink-0 mt-0.5 w-6">{choice.label}</span>
+              <span className="text-stone-300 group-hover:text-stone-100 transition-colors text-lg leading-relaxed">{choice.text}</span>
+            </div>
+          </button>
+        ))}
+      </div>
+    )}
+
+    {phase === "result" && !endingType && !goodEnding && (
+      <button onClick={handleNext}
+        className="w-full bg-amber-700/50 hover:bg-amber-600/60 border border-amber-500/40 text-amber-100 rounded-2xl py-4 transition-all hover:scale-[1.01] text-lg font-bold">
+        {chapter < CHAPTERS.length - 1 ? "繼續修仙之路 →" : "迎向命運的終點…"}
+      </button>
+    )}
+  </div>
+
+  <div className="text-center py-4 text-sm text-stone-600 font-mono">
+    based on 《法官倫理規範》中華民國101年1月6日施行
+  </div>
+</div>
+```
+
+);
+}
+
+ReactDOM.createRoot(document.getElementById(“root”)).render(React.createElement(App));
+</script>
+
+</body>
+</html>
